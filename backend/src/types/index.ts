@@ -1,17 +1,12 @@
-import type { User } from "@prisma/client";
 import type { Request } from "express";
 
 export interface UserInfo {
   id: string;
   email: string;
-  name: string;
+  name?: string;
 }
 
-export interface AuthenticatedRequest extends Request {
-  id: string;
-  email: string;
-  user: UserInfo;
-}
+export type AuthenticatedRequest = Request;
 
 export interface Workspace {
   id: string;
@@ -37,5 +32,3 @@ export interface Message {
   createdAt: Date;
   updatedAt: Date;
 }
-
-export 
