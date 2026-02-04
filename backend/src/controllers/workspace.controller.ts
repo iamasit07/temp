@@ -1,179 +1,187 @@
-import type { Response } from "express";
+import type { Request, Response, NextFunction } from "express";
 import prisma from "../lib/prisma.js";
-import type { AuthenticatedRequest } from "../types/index.js";
+import { AppError } from "../middleware/errorHandler.middleware.js";
 
-export const listWorkspaces = async (
-  req: AuthenticatedRequest,
+export const getWorkspaces = async (
+  req: Request,
   res: Response,
+  next: NextFunction,
 ) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user?.id;
 
     if (!userId) {
-      return res.status(400).json({ message: "User ID is missing" });
+      throw new AppError("User not authenticated", 401);
     }
 
     const workspaces = await prisma.workspace.findMany({
       where: { userId },
-      orderBy: { createdAt: "desc" },
-      include: {
-        _count: {
-          select: { chatPages: true },
-        },
-      },
-    });
-
-    res.status(200).json(workspaces);
-  } catch (error) {
-    console.error("Error fetching workspaces:", error);
-    res.status(500).json({ message: "Internal server error" });
-  }
-};
-
-export const getWorkspace = async (
-  req: AuthenticatedRequest,
-  res: Response,
-) => {
-  try {
-    const userId = req.user.id;
-    const workspaceId = req.params.id;
-
-    if (!userId) {
-      return res.status(400).json({ message: "User ID is missing" });
-    }
-
-    if (!workspaceId || typeof workspaceId !== "string") {
-      return res.status(400).json({ message: "Invalid workspace ID" });
-    }
-
-    const workspace = await prisma.workspace.findFirst({
-      where: { id: workspaceId, userId },
       include: {
         chatPages: {
           orderBy: { updatedAt: "desc" },
-          include: {
-            _count: { select: { messages: true } },
-          },
+        },
+      },
+      orderBy: { updatedAt: "desc" },
+    });
+
+    res.json(workspaces);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get single workspace by ID
+export const getWorkspace = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const userId = req.user?.id;
+    const id = req.params.id as string;
+
+    if (!userId) {
+      throw new AppError("User not authenticated", 401);
+    }
+
+    if (!id) {
+      throw new AppError("Workspace ID is required", 400);
+    }
+
+    const workspace = await prisma.workspace.findFirst({
+      where: {
+        id,
+        userId,
+      },
+      include: {
+        chatPages: {
+          orderBy: { updatedAt: "desc" },
         },
       },
     });
 
     if (!workspace) {
-      return res.status(404).json({ message: "Workspace not found" });
+      throw new AppError("Workspace not found", 404);
     }
 
-    res.status(200).json(workspace);
+    res.json(workspace);
   } catch (error) {
-    console.error("Error fetching workspace:", error);
-    res.status(500).json({ message: "Internal server error" });
+    next(error);
   }
 };
 
+// Create new workspace
 export const createWorkspace = async (
-  req: AuthenticatedRequest,
+  req: Request,
   res: Response,
+  next: NextFunction,
 ) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user?.id;
     const { name } = req.body;
 
     if (!userId) {
-      return res.status(400).json({ message: "User ID is missing" });
+      throw new AppError("User not authenticated", 401);
     }
 
-    if (!name && typeof name !== "string" && name.trim().length === 0) {
-      return res.status(400).json({ message: "Invalid workspace name" });
+    if (!name || typeof name !== "string" || name.trim().length === 0) {
+      throw new AppError("Workspace name is required", 400);
     }
 
-    const newWorkspace = await prisma.workspace.create({
+    const workspace = await prisma.workspace.create({
       data: {
         name: name.trim(),
         userId,
       },
-    });
-
-    res.status(201).json(newWorkspace);
-  } catch (error) {
-    console.error("Error creating workspace:", error);
-    res.status(500).json({ message: "Internal server error" });
-  }
-};
-
-export const updateWorkspace = async (
-  req: AuthenticatedRequest,
-  res: Response,
-) => {
-  try {
-    const userId = req.user.id;
-    const workspaceId = req.params.id;
-    const { name } = req.body;
-
-    if (!userId) {
-      return res.status(400).json({ message: "User ID is missing" });
-    }
-
-    if (!workspaceId || typeof workspaceId !== "string") {
-      return res.status(400).json({ message: "Invalid workspace ID" });
-    }
-
-    if (!name && typeof name !== "string" && name.trim().length === 0) {
-      return res.status(400).json({ message: "Invalid workspace name" });
-    }
-
-    const existing = await prisma.workspace.findFirst({
-      where: { id: workspaceId, userId },
-    });
-
-    if (!existing) {
-      return res.status(404).json({ message: "Workspace not found" });
-    }
-
-    const workspace = await prisma.workspace.update({
-      where: { id: workspaceId },
-      data: {
-        name: name.trim(),
-        updatedAt: new Date(),
+      include: {
+        chatPages: true,
       },
     });
 
-    res.status(200).json(workspace);
+    res.status(201).json(workspace);
   } catch (error) {
-    console.error("Error updating workspace:", error);
-    res.status(500).json({ message: "Internal server error" });
+    next(error);
   }
 };
 
-export const deleteWorkspace = async (
-  req: AuthenticatedRequest,
+// Update workspace
+export const updateWorkspace = async (
+  req: Request,
   res: Response,
+  next: NextFunction,
 ) => {
   try {
-    const userId = req.user.id;
-    const workspaceId = req.params.id;
+    const userId = req.user?.id;
+    const id = req.params.id as string;
+    const { name } = req.body;
 
     if (!userId) {
-      return res.status(400).json({ message: "User ID is missing" });
+      throw new AppError("User not authenticated", 401);
     }
 
-    if (!workspaceId || typeof workspaceId !== "string") {
-      return res.status(400).json({ message: "Invalid workspace ID" });
+    if (!id) {
+      throw new AppError("Workspace ID is required", 400);
     }
 
-    const existing = await prisma.workspace.findFirst({
-      where: { id: workspaceId, userId },
+    // Check ownership
+    const existingWorkspace = await prisma.workspace.findFirst({
+      where: { id, userId },
     });
 
-    if (!existing) {
-      return res.status(404).json({ message: "Workspace not found" });
+    if (!existingWorkspace) {
+      throw new AppError("Workspace not found", 404);
     }
 
+    const workspace = await prisma.workspace.update({
+      where: { id },
+      data: {
+        ...(name && { name: name.trim() }),
+      },
+      include: {
+        chatPages: true,
+      },
+    });
+
+    res.json(workspace);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Delete workspace
+export const deleteWorkspace = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const userId = req.user?.id;
+    const id = req.params.id as string;
+
+    if (!userId) {
+      throw new AppError("User not authenticated", 401);
+    }
+
+    if (!id) {
+      throw new AppError("Workspace ID is required", 400);
+    }
+
+    // Check ownership
+    const existingWorkspace = await prisma.workspace.findFirst({
+      where: { id, userId },
+    });
+
+    if (!existingWorkspace) {
+      throw new AppError("Workspace not found", 404);
+    }
+
+    // Delete workspace (cascades to chatPages and messages)
     await prisma.workspace.delete({
-      where: { id: workspaceId },
+      where: { id },
     });
 
     res.status(204).send();
   } catch (error) {
-    console.error("Error deleting workspace:", error);
-    res.status(500).json({ message: "Internal server error" });
+    next(error);
   }
 };
