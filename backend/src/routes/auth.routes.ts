@@ -1,12 +1,27 @@
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 import * as authController from "../controllers/auth.controller.js";
 import { authMiddleware } from "../middleware/auth.middleware.js";
+import { validateBody } from "../middleware/validate.middleware.js";
+import { signupSchema, loginSchema } from "../lib/validations.js";
 
 const router = Router();
 
-router.post("/signup", authController.signup);
-router.post("/login", authController.login);
-router.post("/logout", authController.logout);
-router.get("/me", authMiddleware, authController.getMe);
+router.post(
+  "/signup",
+  validateBody(signupSchema) as RequestHandler,
+  authController.signup as RequestHandler,
+);
+router.post(
+  "/login",
+  validateBody(loginSchema) as RequestHandler,
+  authController.login as RequestHandler,
+);
+router.post("/logout", authController.logout as RequestHandler);
+router.post("/refresh", authController.refresh as RequestHandler);
+router.get(
+  "/me",
+  authMiddleware as RequestHandler,
+  authController.getMe as RequestHandler,
+);
 
 export default router;

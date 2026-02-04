@@ -3,22 +3,45 @@ import {
   createWorkspace,
   deleteWorkspace,
   getWorkspace,
-  listWorkspaces,
+  getWorkspaces,
   updateWorkspace,
 } from "../controllers/workspace.controller.js";
-import type { Workspace } from "@prisma/client";
+import { authMiddleware } from "../middleware/auth.middleware.js";
+import {
+  validateBody,
+  validateParams,
+} from "../middleware/validate.middleware.js";
+import {
+  createWorkspaceSchema,
+  updateWorkspaceSchema,
+  mongoIdSchema,
+} from "../lib/validations.js";
 
 const WorkspaceRouter = Router();
 
-WorkspaceRouter.get("/", listWorkspaces as unknown as RequestHandler);
-WorkspaceRouter.get("/:workspaceId", getWorkspace as unknown as RequestHandler);
-WorkspaceRouter.post("/", createWorkspace as unknown as RequestHandler);
+// All workspace routes require authentication
+WorkspaceRouter.use(authMiddleware as RequestHandler);
+
+WorkspaceRouter.get("/", getWorkspaces as unknown as RequestHandler);
+WorkspaceRouter.get(
+  "/:id",
+  validateParams(mongoIdSchema) as RequestHandler,
+  getWorkspace as unknown as RequestHandler,
+);
+WorkspaceRouter.post(
+  "/",
+  validateBody(createWorkspaceSchema) as RequestHandler,
+  createWorkspace as unknown as RequestHandler,
+);
 WorkspaceRouter.put(
-  "/:workspaceId",
+  "/:id",
+  validateParams(mongoIdSchema) as RequestHandler,
+  validateBody(updateWorkspaceSchema) as RequestHandler,
   updateWorkspace as unknown as RequestHandler,
 );
 WorkspaceRouter.delete(
-  "/:workspaceId",
+  "/:id",
+  validateParams(mongoIdSchema) as RequestHandler,
   deleteWorkspace as unknown as RequestHandler,
 );
 
