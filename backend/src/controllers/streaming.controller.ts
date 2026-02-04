@@ -4,7 +4,7 @@ import { AppError } from "../middleware/errorHandler.middleware.js";
 import {
   convertToLangChainMessages,
   getChatAgent,
-  type ChatAgentOptions,
+  type SSEEvent,
 } from "../services/agent.service.js";
 
 export const streamChat = async (
@@ -69,11 +69,11 @@ export const streamChat = async (
     res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders();
 
-    const sendEvent = (event: ChatAgentOptions) => {
+    const sendEvent = (event: SSEEvent) => {
       res.write(`data: ${JSON.stringify(event)}\n\n`);
     };
 
-    const langChainMessages = convertToLangChainMessages(messageContent);
+    const agentMessages = convertToLangChainMessages(messageContent);
 
     const agent = getChatAgent();
     let fullContent = "";
@@ -81,7 +81,7 @@ export const streamChat = async (
       [];
 
     try {
-      for await (const event of agent.stream(langChainMessages)) {
+      for await (const event of agent.stream(agentMessages)) {
         sendEvent(event);
 
         if (event.type === "token" && typeof event.data === "string") {
@@ -207,19 +207,15 @@ export const completeChat = async (
       },
     });
 
-    const langChainMessages = convertToLangChainMessages(messageContent);
+    const agentMessages = convertToLangChainMessages(messageContent);
     const agent = getChatAgent();
-    const result = await agent.invoke(langChainMessages);
-    const lastMessage = result[result.length - 1];
+    const resultMessages = await agent.invoke(agentMessages);
 
-    if (!lastMessage) {
-      return next(new AppError("No response from agent", 500));
-    }
-
-    const content =
-      typeof lastMessage.content === "string"
-        ? lastMessage.content
-        : JSON.stringify(lastMessage.content);
+    // Extract text content from the last AI message
+    const lastMessage = resultMessages[resultMessages.length - 1];
+    const content = typeof lastMessage?.content === 'string' 
+      ? lastMessage.content 
+      : JSON.stringify(lastMessage?.content || '');
 
     const assistantMessage = await prisma.message.create({
       data: {

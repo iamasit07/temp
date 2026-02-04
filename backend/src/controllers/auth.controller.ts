@@ -8,7 +8,6 @@ import {
 } from "../lib/jwt.js";
 import { AppError } from "../middleware/errorHandler.middleware.js";
 
-// Cookie options for security
 const ACCESS_COOKIE_OPTIONS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === "production",
@@ -31,6 +30,7 @@ export const signup = async (
   next: NextFunction,
 ) => {
   try {
+    console.log("[AUTH] Signup attempt for:", req.body.email);
     const { email, password, name } = req.body;
 
     if (!email || typeof email !== "string") {
@@ -64,10 +64,15 @@ export const signup = async (
     res.cookie("authToken", accessToken, ACCESS_COOKIE_OPTIONS);
     res.cookie("refreshToken", refreshToken, REFRESH_COOKIE_OPTIONS);
 
+    console.log("[AUTH] Signup successful for:", user.email);
     res.status(201).json({
       user: { id: user.id, email: user.email, name: user.name },
     });
   } catch (error) {
+    console.error(
+      "[AUTH] Signup failed:",
+      error instanceof Error ? error.message : error,
+    );
     next(error);
   }
 };
@@ -78,6 +83,7 @@ export const login = async (
   next: NextFunction,
 ) => {
   try {
+    console.log("[AUTH] Login attempt for:", req.body.email);
     const { email, password } = req.body;
 
     if (!email || typeof email !== "string") {
@@ -109,10 +115,15 @@ export const login = async (
     res.cookie("authToken", accessToken, ACCESS_COOKIE_OPTIONS);
     res.cookie("refreshToken", refreshToken, REFRESH_COOKIE_OPTIONS);
 
+    console.log("[AUTH] Login successful for:", user.email);
     res.json({
       user: { id: user.id, email: user.email, name: user.name },
     });
   } catch (error) {
+    console.error(
+      "[AUTH] Login failed:",
+      error instanceof Error ? error.message : error,
+    );
     next(error);
   }
 };

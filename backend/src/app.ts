@@ -21,6 +21,8 @@ const corsOptions = {
   allowedHeaders: ["Content-Type", "Authorization"],
 };
 
+console.log("[APP] CORS origin:", corsOptions.origin);
+
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(cookieParser());

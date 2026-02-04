@@ -1,132 +1,136 @@
-import { ChatOpenAI } from "@langchain/openai";
-import {
-  AIMessage,
-  BaseMessage,
-  HumanMessage,
-  ToolMessage,
-} from "@langchain/core/messages";
-import { TavilySearch } from "@langchain/tavily";
-import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
-import { ToolNode } from "@langchain/langgraph/prebuilt";
+import { ChatOpenAI } from '@langchain/openai';
+import { BaseMessage, HumanMessage, AIMessage, ToolMessage, AIMessageChunk } from '@langchain/core/messages';
+import { Annotation, StateGraph, START } from '@langchain/langgraph';
+import { ToolNode } from '@langchain/langgraph/prebuilt';
+import { TavilySearch } from '@langchain/tavily';
+import dotenv from 'dotenv';
+dotenv.config();
 
+export interface SSEEvent {
+  type: 'token' | 'tool_start' | 'tool_end' | 'message' | 'done' | 'error';
+  data: unknown;
+}
+
+// Define the agent state schema using Annotation
 const AgentState = Annotation.Root({
   messages: Annotation<BaseMessage[]>({
-    reducer: (oldMessages, newMessages) => oldMessages.concat(newMessages),
+    reducer: (curr, update) => [...curr, ...update],
     default: () => [],
   }),
 });
 
+// Type alias for state
 type AgentStateType = typeof AgentState.State;
 
-export interface ChatAgentOptions {
-  type: "token" | "tool_start" | "tool_end" | "message" | "done" | "error";
-  data: unknown;
-}
-
 export class ChatAgent {
-  private graph: any;
   private model: ChatOpenAI;
   private tools: TavilySearch[];
-  private initalized: boolean = false;
+  private graph: ReturnType<typeof this.buildGraph>;
 
   constructor() {
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) {
+      console.warn("OPENROUTER_API_KEY is missing from environment variables");
+    }
+
     this.model = new ChatOpenAI({
+      apiKey: apiKey,
       configuration: {
         baseURL: "https://openrouter.ai/api/v1",
       },
-      apiKey: process.env.OPENROUTER_API_KEY || "",
-      modelName: "openai/gpt-4o",
+      modelName: 'openai/gpt-4o',
       streaming: true,
       temperature: 0.7,
     });
 
     this.tools = [
       new TavilySearch({
-        maxResults: 3,
         tavilyApiKey: process.env.TAVILY_API_KEY || "",
+        maxResults: 3,
       }),
     ];
+
+    this.graph = this.buildGraph();
   }
 
-  private async initialize(): Promise<void> {
-    if (this.initalized) return;
-
+  private buildGraph() {
+    // Bind tools to the model
     const modelWithTools = this.model.bindTools(this.tools);
-    const workflow = new StateGraph(AgentState);
 
-    const AgentNode = async (
-      state: AgentStateType,
-    ): Promise<Partial<AgentStateType>> => {
+    // Agent node - calls the LLM
+    const agentNode = async (state: AgentStateType): Promise<Partial<AgentStateType>> => {
       const response = await modelWithTools.invoke(state.messages);
-      return {
-        messages: [response],
-      };
+      return { messages: [response] };
     };
 
+    // Tool node - executes tools using LangGraph's ToolNode
     const toolNode = new ToolNode(this.tools);
 
-    const shouldContinue = (state: AgentStateType): typeof END | "tools" => {
+    // Conditional edge - determine if we should continue to tools or end
+    function shouldContinue(state: AgentStateType): "tools" | "__end__" {
       const lastMessage = state.messages[state.messages.length - 1];
-      if (
-        lastMessage &&
-        "tool_calls" in lastMessage &&
-        (lastMessage as AIMessage).tool_calls?.length
-      ) {
+      
+      // If the LLM makes a tool call, route to the tool node
+      if (lastMessage && 'tool_calls' in lastMessage && 
+          Array.isArray(lastMessage.tool_calls) && 
+          lastMessage.tool_calls.length > 0) {
         return "tools";
       }
-      return END;
-    };
-
-    workflow.addNode("agent", AgentNode);
-    workflow.addNode("tools", toolNode);
-
-    (workflow as any).addEdge(START, "agent");
-    (workflow as any).addConditionalEdge("agent", shouldContinue, {
-      tools: "tools",
-      [END]: END,
-    });
-    (workflow as any).addEdge("tools", "agent");
-
-    this.graph = (workflow as any).compile();
-    this.initalized = true;
-  }
-
-  async *stream(messages: BaseMessage[]): AsyncGenerator<ChatAgentOptions> {
-    await this.initialize();
-
-    if (!this.graph) {
-      yield { type: "error", data: { message: "Agent not initialized" } };
-      return;
+      
+      // Otherwise we're done
+      return "__end__";
     }
 
+    // Build the graph with StateGraph
+    const workflow = new StateGraph(AgentState)
+      .addNode("agent", agentNode)
+      .addNode("tools", toolNode)
+      .addEdge(START, "agent")
+      .addConditionalEdges("agent", shouldContinue)
+      .addEdge("tools", "agent"); // After tools, go back to agent for response
+
+    return workflow.compile();
+  }
+
+  async *stream(messages: BaseMessage[]): AsyncGenerator<SSEEvent> {
     try {
-      const eventStream = await (this.graph as any).streamEvents(
-        { messages },
-        { version: "v2" },
+      const initialState = { messages };
+      
+      // Stream events from the compiled StateGraph
+      const eventStream = this.graph.streamEvents(
+        initialState,
+        { version: 'v2' }
       );
 
       for await (const event of eventStream) {
-        if (event.event === "on_chat_model_stream") {
-          const chunk = event.data?.chunk;
-          if (chunk?.content) {
+        // Handle token streaming from the LLM
+        if (event.event === 'on_chat_model_stream') {
+          const chunk = event.data?.chunk as AIMessageChunk | undefined;
+          if (chunk?.content && typeof chunk.content === 'string') {
             yield {
-              type: "token",
+              type: 'token',
               data: chunk.content,
             };
           }
-        } else if (event.event === "on_tool_start") {
+        }
+        
+        // Handle tool execution start
+        else if (event.event === 'on_tool_start') {
           yield {
-            type: "tool_start",
+            type: 'tool_start',
             data: {
-              toolName: event.name,
+              toolName: event.name || 'tavily_search',
               input: event.data?.input,
             },
           };
-        } else if (event.event === "on_tool_end") {
+        }
+        
+        // Handle tool execution end
+        else if (event.event === 'on_tool_end') {
           yield {
-            type: "tool_end",
+            type: 'tool_end',
             data: {
-              toolName: event.name,
+              toolName: event.name || 'tavily_search',
               output: event.data?.output,
             },
           };
@@ -134,53 +138,41 @@ export class ChatAgent {
       }
 
       yield {
-        type: "done",
-        data: {
-          success: true,
-        },
+        type: 'done',
+        data: { success: true },
       };
-    } catch (error: any) {
+    } catch (error) {
+      console.error('Agent stream error:', error);
       yield {
-        type: "error",
-        data: {
-          message:
-            error instanceof Error
-              ? error.message
-              : "Unknown error occurred during agent execution",
+        type: 'error',
+        data: { 
+          message: error instanceof Error ? error.message : 'Unknown error occurred' 
         },
       };
     }
   }
 
   async invoke(messages: BaseMessage[]): Promise<BaseMessage[]> {
-    await this.initialize();
-
-    if (!this.graph) {
-      throw new Error("Agent not initialized");
-    }
-
-    const result = await (this.graph as any).invoke({ messages });
+    const result = await this.graph.invoke({ messages });
     return result.messages;
   }
 }
 
-export function convertToLangChainMessages(
-  messages: Array<{
-    role: string;
-    content: string;
-    metadata?: Record<string, unknown>;
-  }>,
-): BaseMessage[] {
+export function convertToLangChainMessages(messages: Array<{
+  role: string;
+  content: string;
+  metadata?: Record<string, unknown>;
+}>): BaseMessage[] {
   return messages.map((msg) => {
     switch (msg.role) {
-      case "user":
+      case 'user':
         return new HumanMessage(msg.content);
-      case "assistant":
+      case 'assistant':
         return new AIMessage(msg.content);
-      case "tool":
+      case 'tool':
         return new ToolMessage({
           content: msg.content,
-          tool_call_id: (msg.metadata?.toolCallId as string) || "",
+          tool_call_id: (msg.metadata?.toolCallId as string) || 'unknown',
         });
       default:
         return new HumanMessage(msg.content);
@@ -188,11 +180,12 @@ export function convertToLangChainMessages(
   });
 }
 
-let angentInstance: ChatAgent | null = null;
+// Singleton instance
+let agentInstance: ChatAgent | null = null;
 
 export function getChatAgent(): ChatAgent {
-  if (!angentInstance) {
-    angentInstance = new ChatAgent();
+  if (!agentInstance) {
+    agentInstance = new ChatAgent();
   }
-  return angentInstance;
+  return agentInstance;
 }

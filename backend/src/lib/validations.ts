@@ -52,14 +52,14 @@ export const updateChatPageSchema = z.object({
 
 export const createMessageSchema = z.object({
   content: z.string().min(1, "Message content is required"),
-  role: z.enum(["user", "assistant", "system"]).default("user"),
+  role: z.enum(["user", "assistant", "tool"]).default("user"),
 });
 
 export const streamChatSchema = z.object({
   messages: z
     .array(
       z.object({
-        role: z.enum(["user", "assistant", "system"]),
+        role: z.enum(["user", "assistant", "tool"]),
         content: z.string(),
         metadata: z.record(z.unknown()).optional(),
       }),

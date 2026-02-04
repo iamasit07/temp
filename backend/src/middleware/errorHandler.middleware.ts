@@ -1,5 +1,4 @@
 import type { Request, Response, NextFunction } from "express";
-import e from "express";
 
 export class AppError extends Error {
   statusCode: number;
@@ -20,12 +19,6 @@ export const errorHandler = (
   res: Response,
   next: NextFunction,
 ) => {
-  console.error("====Error Handler====");
-  console.error("Error: ", err);
-  console.error("Method:", req.method);
-  console.error("Path:", req.path);
-  console.error("====End Error Handler====");
-
   let statusCode = 500;
   let message = "Internal Server Error";
 
@@ -46,6 +39,16 @@ export const errorHandler = (
     message = "Not Found";
   } else {
     message = err.message;
+  }
+
+  const isExpectedAuthError = statusCode === 401 && req.path.includes("/auth/");
+  if (statusCode >= 500 || !isExpectedAuthError) {
+    console.error(
+      `[ERROR] ${req.method} ${req.path} - ${statusCode}: ${message}`,
+    );
+    if (statusCode >= 500) {
+      console.error("[ERROR] Stack:", err.stack);
+    }
   }
 
   res.status(statusCode).json({
