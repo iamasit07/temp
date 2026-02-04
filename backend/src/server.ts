@@ -1,36 +1,28 @@
-import express from "express";
-import cors from "cors";
-import cookieParser from "cookie-parser";
+import app from "./app.js";
 import dotenv from "dotenv";
-import authRoutes from "./routes/auth.routes.js";
-import WorkspaceRouters from "./routes/workspace.routes.js";
-import ChatPageRouter from "./routes/chatPage.routes.js";
-import MessageRouter from "./routes/message.routes.js";
+import { connectDatabase } from "./lib/prisma.js";
 
-const app = express();
 dotenv.config();
-
-app.use(
-  cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
-    credentials: true,
-  }),
-);
-
-app.use(express.json());
-app.use(cookieParser());
-
-app.use("/auth", authRoutes);
-app.use("/api/workspaces", WorkspaceRouters);
-app.use("/api/messages", ChatPageRouter);
-app.use("api/:chatPageId/messages", MessageRouter);
 
 const PORT = process.env.PORT || 5000;
 
-app.get("/health", (req, res) => {
-  res.status(200).send("Server is healthy");
-});
+async function startServer() {
+  console.log("[SERVER] Starting server...");
 
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+  // Test database connection first
+  const dbConnected = await connectDatabase();
+
+  if (!dbConnected) {
+    console.error(
+      "[SERVER] WARNING: Server starting WITHOUT database connection!",
+    );
+    console.error("[SERVER] Check your DATABASE_URL in .env file");
+    console.error("[SERVER] Make sure your IP is whitelisted in MongoDB Atlas");
+  }
+
+  app.listen(PORT, () => {
+    console.log(`[SERVER] Running on port ${PORT}`);
+  });
+}
+
+startServer();

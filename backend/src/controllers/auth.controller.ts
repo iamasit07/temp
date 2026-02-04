@@ -1,98 +1,225 @@
-import type { Request, Response } from "express";
+import type { Request, Response, NextFunction } from "express";
 import bcrypt from "bcryptjs";
 import prisma from "../lib/prisma.js";
-import { generateToken } from "../lib/jwt.js";
+import {
+  generateTokenPair,
+  verifyRefreshToken,
+  generateAccessToken,
+} from "../lib/jwt.js";
+import { AppError } from "../middleware/errorHandler.middleware.js";
 
-export const signup = async (req: Request, res: Response) => {
+const ACCESS_COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "lax" as const,
+  maxAge: 15 * 60 * 1000, // 15 minutes
+  path: "/",
+};
+
+const REFRESH_COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "lax" as const,
+  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+  path: "/api/auth", // Refresh token only sent to auth endpoints
+};
+
+export const signup = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
   try {
+    console.log("[AUTH] Signup attempt for:", req.body.email);
     const { email, password, name } = req.body;
+
+    if (!email || typeof email !== "string") {
+      throw new AppError("Email is required", 400);
+    }
+
+    if (!password || typeof password !== "string" || password.length < 6) {
+      throw new AppError("Password must be at least 6 characters", 400);
+    }
 
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
-      return res.status(400).json({ message: "User already exists" });
+      throw new AppError("User already exists", 400);
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(password, 12);
 
     const user = await prisma.user.create({
       data: {
-        email,
+        email: email.toLowerCase().trim(),
         password: hashedPassword,
-        name,
+        name: name?.trim() || null,
       },
     });
 
-    const token = generateToken({ userId: user.id, email: user.email });
-
-    res.cookie("authToken", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    const { accessToken, refreshToken } = generateTokenPair({
+      userId: user.id,
+      email: user.email,
     });
 
+    res.cookie("authToken", accessToken, ACCESS_COOKIE_OPTIONS);
+    res.cookie("refreshToken", refreshToken, REFRESH_COOKIE_OPTIONS);
+
+    console.log("[AUTH] Signup successful for:", user.email);
     res.status(201).json({
       user: { id: user.id, email: user.email, name: user.name },
     });
   } catch (error) {
-    res.status(500).json({ message: "Internal server error" });
+    console.error(
+      "[AUTH] Signup failed:",
+      error instanceof Error ? error.message : error,
+    );
+    next(error);
   }
 };
 
-export const login = async (req: Request, res: Response) => {
+export const login = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
   try {
+    console.log("[AUTH] Login attempt for:", req.body.email);
     const { email, password } = req.body;
-    const user = await prisma.user.findUnique({ where: { email } });
+
+    if (!email || typeof email !== "string") {
+      throw new AppError("Email is required", 400);
+    }
+
+    if (!password || typeof password !== "string") {
+      throw new AppError("Password is required", 400);
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email: email.toLowerCase().trim() },
+    });
 
     if (!user) {
-      return res.status(400).json({ message: "Invalid email or password" });
+      throw new AppError("Invalid email or password", 401);
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
-      return res.status(400).json({ message: "Invalid email or password" });
+      throw new AppError("Invalid email or password", 401);
     }
 
-    const token = generateToken({ userId: user.id, email: user.email });
+    const { accessToken, refreshToken } = generateTokenPair({
+      userId: user.id,
+      email: user.email,
+    });
 
-    res.cookie("authToken", token, {
+    res.cookie("authToken", accessToken, ACCESS_COOKIE_OPTIONS);
+    res.cookie("refreshToken", refreshToken, REFRESH_COOKIE_OPTIONS);
+
+    console.log("[AUTH] Login successful for:", user.email);
+    res.json({
+      user: { id: user.id, email: user.email, name: user.name },
+    });
+  } catch (error) {
+    console.error(
+      "[AUTH] Login failed:",
+      error instanceof Error ? error.message : error,
+    );
+    next(error);
+  }
+};
+
+export const logout = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    res.clearCookie("authToken", {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      sameSite: "lax" as const,
+      path: "/",
     });
+    res.clearCookie("refreshToken", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax" as const,
+      path: "/api/auth",
+    });
+
+    res.json({ message: "Logged out successfully" });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const refresh = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const refreshToken = req.cookies?.refreshToken;
+
+    if (!refreshToken) {
+      throw new AppError("Refresh token not found", 401);
+    }
+
+    let payload;
+    try {
+      payload = verifyRefreshToken(refreshToken);
+    } catch {
+      throw new AppError("Invalid or expired refresh token", 401);
+    }
+
+    // Verify user still exists
+    const user = await prisma.user.findUnique({
+      where: { id: payload.userId },
+    });
+
+    if (!user) {
+      throw new AppError("User not found", 401);
+    }
+
+    // Generate new access token
+    const newAccessToken = generateAccessToken({
+      userId: user.id,
+      email: user.email,
+    });
+
+    res.cookie("authToken", newAccessToken, ACCESS_COOKIE_OPTIONS);
 
     res.json({
       user: { id: user.id, email: user.email, name: user.name },
     });
   } catch (error) {
-    res.status(500).json({ message: "Internal server error" });
+    next(error);
   }
 };
 
-export const logout = async (req: Request, res: Response) => {
-  res.clearCookie("authToken", {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-  });
-  res.json({ message: "Logged out successfully" });
-};
-
-export const getMe = async (req: Request, res: Response) => {
+export const getMe = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
   try {
-    const userId = (req as any).user.userId;
+    const userId = req.user?.id;
+
+    if (!userId) {
+      throw new AppError("Unauthorized", 401);
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, email: true, name: true },
+      select: { id: true, email: true, name: true, createdAt: true },
     });
 
     if (!user) {
-      return res.status(404).json({ message: "User not found" });
+      throw new AppError("User not found", 404);
     }
 
     res.json({ user });
   } catch (error) {
-    res.status(500).json({ message: "Internal server error" });
+    next(error);
   }
 };

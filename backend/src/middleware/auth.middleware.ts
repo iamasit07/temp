@@ -1,13 +1,21 @@
 import type { Request, Response, NextFunction } from "express";
 import { verifyToken } from "../lib/jwt.js";
+import { AppError } from "./errorHandler.middleware.js";
 
-export interface AuthenticatedRequest extends Request {
-  userId?: string;
-  email?: string;
+// Extend Express Request to include user info
+declare global {
+  namespace Express {
+    interface Request {
+      user?: {
+        id: string;
+        email: string;
+      };
+    }
+  }
 }
 
 export const authMiddleware = (
-  req: AuthenticatedRequest,
+  req: Request,
   res: Response,
   next: NextFunction,
 ) => {
@@ -23,14 +31,22 @@ export const authMiddleware = (
     }
 
     if (!token) {
-      return res.status(401).json({ message: "Unauthorized" });
+      throw new AppError("Unauthorized - No token provided", 401);
     }
 
     const payload = verifyToken(token);
 
-    req.userId = payload.userId;
+    // Set user object on request for use in controllers
+    req.user = {
+      id: payload.userId,
+      email: payload.email,
+    };
+
     next();
   } catch (error) {
-    return res.status(401).json({ message: "Unauthorized" });
+    if (error instanceof AppError) {
+      return next(error);
+    }
+    next(new AppError("Unauthorized - Invalid token", 401));
   }
 };

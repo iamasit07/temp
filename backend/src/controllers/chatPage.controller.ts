@@ -1,21 +1,22 @@
-import type { Response } from "express";
+import type { Request, Response, NextFunction } from "express";
 import prisma from "../lib/prisma.js";
-import type { AuthenticatedRequest, ChatPage } from "../types/index.js";
+import { AppError } from "../middleware/errorHandler.middleware.js";
 
 export const listChatPages = async (
-  req: AuthenticatedRequest,
+  req: Request,
   res: Response,
+  next: NextFunction,
 ) => {
   try {
     const userId = req.user?.id;
-    const workspaceId = req.params.workspaceId;
+    const workspaceId = req.params.workspaceId as string;
 
     if (!userId) {
-      return res.status(401).json({ message: "Unauthorized" });
+      throw new AppError("Unauthorized", 401);
     }
 
-    if (!workspaceId || typeof workspaceId !== "string") {
-      return res.status(400).json({ message: "Invalid workspace ID" });
+    if (!workspaceId) {
+      throw new AppError("Workspace ID is required", 400);
     }
 
     const workspace = await prisma.workspace.findFirst({
@@ -26,10 +27,10 @@ export const listChatPages = async (
     });
 
     if (!workspace) {
-      return res.status(404).json({ message: "Workspace not found" });
+      throw new AppError("Workspace not found", 404);
     }
 
-    const chats: ChatPage[] = await prisma.chatPage.findMany({
+    const chats = await prisma.chatPage.findMany({
       where: { workspaceId: workspaceId },
       orderBy: { createdAt: "desc" },
       include: {
@@ -39,24 +40,27 @@ export const listChatPages = async (
       },
     });
 
-    return res.status(200).json({ workspace, chats });
+    res.status(200).json({ workspace, chats });
   } catch (error) {
-    console.error("Error fetching chat page data:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    next(error);
   }
 };
 
-export const getChatPage = async (req: AuthenticatedRequest, res: Response) => {
+export const getChatPage = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
   try {
     const userId = req.user?.id;
-    const chatPageId = req.params.chatPageId;
+    const chatPageId = req.params.chatPageId as string;
 
     if (!userId) {
-      return res.status(401).json({ message: "Unauthorized" });
+      throw new AppError("Unauthorized", 401);
     }
 
-    if (!chatPageId || typeof chatPageId !== "string") {
-      return res.status(400).json({ message: "Chat page ID is required" });
+    if (!chatPageId) {
+      throw new AppError("Chat page ID is required", 400);
     }
 
     const chatPage = await prisma.chatPage.findFirst({
@@ -72,46 +76,42 @@ export const getChatPage = async (req: AuthenticatedRequest, res: Response) => {
     });
 
     if (!chatPage) {
-      return res.status(404).json({ message: "Chat page not found" });
+      throw new AppError("Chat page not found", 404);
     }
 
-    const workspace = await prisma.workspace.findFirst({
-      where: {
-        id: chatPage.workspaceId,
-        userId: userId,
-      },
-    });
-
-    if (!workspace) {
-      return res.status(404).json({ message: "Workspace not found" });
+    // Verify ownership
+    if (chatPage.workspace.userId !== userId) {
+      throw new AppError("Forbidden", 403);
     }
 
-    return res.status(200).json({ chatPage });
+    res.status(200).json({ chatPage });
   } catch (error) {
-    console.error("Error fetching chat page details:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    next(error);
   }
 };
 
 export const createChatPage = async (
-  req: AuthenticatedRequest,
+  req: Request,
   res: Response,
+  next: NextFunction,
 ) => {
   try {
     const userId = req.user?.id;
-    const workspaceId = req.params.workspaceId;
+    const workspaceId = req.params.workspaceId as string;
     const { title } = req.body;
 
     if (!userId) {
-      return res.status(401).json({ message: "Unauthorized" });
+      throw new AppError("Unauthorized", 401);
     }
 
-    if (!workspaceId || typeof workspaceId !== "string") {
-      return res.status(400).json({ message: "Workspace ID is required" });
+    if (!workspaceId) {
+      throw new AppError("Workspace ID is required", 400);
     }
 
-    if (!title) {
-      return res.status(400).json({ message: "Title is required" });
+    const titleValue = title || "New Chat";
+
+    if (typeof titleValue !== "string" || titleValue.trim().length > 100) {
+      throw new AppError("Title must be less than 100 characters", 400);
     }
 
     const workspace = await prisma.workspace.findFirst({
@@ -122,75 +122,64 @@ export const createChatPage = async (
     });
 
     if (!workspace) {
-      return res.status(404).json({ message: "Workspace not found" });
-    }
-
-    if (title && typeof title === "string" && title.trim().length > 100) {
-      return res
-        .status(400)
-        .json({ message: "Title must be less than 100 characters" });
+      throw new AppError("Workspace not found", 404);
     }
 
     const newChatPage = await prisma.chatPage.create({
       data: {
-        title: title.trim(),
+        title: titleValue.trim(),
         workspaceId: workspaceId,
       },
     });
 
-    return res.status(201).json({ chatPage: newChatPage });
+    res.status(201).json({ chatPage: newChatPage });
   } catch (error) {
-    console.error("Error creating chat page:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    next(error);
   }
 };
 
 export const updateChatPageTitle = async (
-  req: AuthenticatedRequest,
+  req: Request,
   res: Response,
+  next: NextFunction,
 ) => {
   try {
     const userId = req.user?.id;
-    const chatPageId = req.params.chatPageId;
+    const chatPageId = req.params.chatPageId as string;
     const { title } = req.body;
 
     if (!userId) {
-      return res.status(401).json({ message: "Unauthorized" });
+      throw new AppError("Unauthorized", 401);
     }
 
-    if (!chatPageId || typeof chatPageId !== "string") {
-      return res.status(400).json({ message: "Chat page ID is required" });
+    if (!chatPageId) {
+      throw new AppError("Chat page ID is required", 400);
     }
 
-    if (!title) {
-      return res.status(400).json({ message: "Title is required" });
+    if (!title || typeof title !== "string" || title.trim().length === 0) {
+      throw new AppError("Title is required", 400);
     }
 
-    if (title && typeof title === "string" && title.trim().length > 100) {
-      return res
-        .status(400)
-        .json({ message: "Title must be less than 100 characters" });
+    if (title.trim().length > 100) {
+      throw new AppError("Title must be less than 100 characters", 400);
     }
 
     const chatPage = await prisma.chatPage.findFirst({
       where: {
         id: chatPageId,
       },
-    });
-
-    if (!chatPage) {
-      return res.status(404).json({ message: "Chat page not found" });
-    }
-
-    const workspace = await prisma.workspace.findFirst({
-      where: {
-        id: chatPage.workspaceId,
-        userId: userId,
+      include: {
+        workspace: true,
       },
     });
 
-    if (!workspace) {
-      return res.status(404).json({ message: "Workspace not found" });
+    if (!chatPage) {
+      throw new AppError("Chat page not found", 404);
+    }
+
+    // Verify ownership
+    if (chatPage.workspace.userId !== userId) {
+      throw new AppError("Forbidden", 403);
     }
 
     const updatedChatPage = await prisma.chatPage.update({
@@ -198,57 +187,53 @@ export const updateChatPageTitle = async (
       data: { title: title.trim(), updatedAt: new Date() },
     });
 
-    return res.status(200).json({ chatPage: updatedChatPage });
+    res.status(200).json({ chatPage: updatedChatPage });
   } catch (error) {
-    console.error("Error updating chat page title:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    next(error);
   }
 };
 
 export const deleteChatPage = async (
-  req: AuthenticatedRequest,
+  req: Request,
   res: Response,
+  next: NextFunction,
 ) => {
   try {
     const userId = req.user?.id;
-    const chatPageId = req.params.chatPageId;
+    const chatPageId = req.params.chatPageId as string;
 
     if (!userId) {
-      return res.status(401).json({ message: "Unauthorized" });
+      throw new AppError("Unauthorized", 401);
     }
 
-    if (!chatPageId || typeof chatPageId !== "string") {
-      return res.status(400).json({ message: "Chat page ID is required" });
+    if (!chatPageId) {
+      throw new AppError("Chat page ID is required", 400);
     }
 
     const chatPage = await prisma.chatPage.findFirst({
       where: {
         id: chatPageId,
       },
-    });
-
-    if (!chatPage) {
-      return res.status(404).json({ message: "Chat page not found" });
-    }
-
-    const workspace = await prisma.workspace.findFirst({
-      where: {
-        id: chatPage.workspaceId,
-        userId: userId,
+      include: {
+        workspace: true,
       },
     });
 
-    if (!workspace) {
-      return res.status(404).json({ message: "Workspace not found" });
+    if (!chatPage) {
+      throw new AppError("Chat page not found", 404);
+    }
+
+    // Verify ownership
+    if (chatPage.workspace.userId !== userId) {
+      throw new AppError("Forbidden", 403);
     }
 
     await prisma.chatPage.delete({
       where: { id: chatPageId },
     });
 
-    return res.status(200).json({ message: "Chat page deleted successfully" });
+    res.status(200).json({ message: "Chat page deleted successfully" });
   } catch (error) {
-    console.error("Error deleting chat page:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    next(error);
   }
 };

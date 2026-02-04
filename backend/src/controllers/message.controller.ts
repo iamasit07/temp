@@ -1,41 +1,43 @@
-import type { Response } from "express";
+import type { Request, Response, NextFunction } from "express";
 import prisma from "../lib/prisma.js";
-import type { AuthenticatedRequest } from "../types/index.js";
+import { AppError } from "../middleware/errorHandler.middleware.js";
+
+const VALID_ROLES = ["user", "assistant", "system"] as const;
+type MessageRole = (typeof VALID_ROLES)[number];
 
 export const listMessages = async (
-  req: AuthenticatedRequest,
+  req: Request,
   res: Response,
+  next: NextFunction,
 ) => {
   try {
     const userId = req.user?.id;
-    const chatPageId = req.params.chatPageId;
+    const chatPageId = req.params.chatPageId as string;
 
     if (!userId) {
-      return res.status(401).json({ message: "Unauthorized" });
+      throw new AppError("Unauthorized", 401);
     }
 
-    if (!chatPageId || typeof chatPageId !== "string") {
-      return res.status(400).json({ message: "chatPageId is required" });
+    if (!chatPageId) {
+      throw new AppError("Chat page ID is required", 400);
     }
 
     const chatPage = await prisma.chatPage.findFirst({
       where: {
         id: chatPageId,
       },
+      include: {
+        workspace: true,
+      },
     });
 
     if (!chatPage) {
-      return res.status(404).json({ message: "Chat page not found" });
+      throw new AppError("Chat page not found", 404);
     }
 
-    const workspace = await prisma.workspace.findFirst({
-      where: {
-        id: chatPage.workspaceId,
-        userId: userId,
-      },
-    });
-    if (!workspace) {
-      return res.status(403).json({ message: "Forbidden" });
+    // Verify ownership
+    if (chatPage.workspace.userId !== userId) {
+      throw new AppError("Forbidden", 403);
     }
 
     const messages = await prisma.message.findMany({
@@ -47,191 +49,173 @@ export const listMessages = async (
       },
     });
 
-    return res.status(200).json(messages);
+    res.status(200).json(messages);
   } catch (error) {
-    console.error("Error listing messages:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    next(error);
   }
 };
 
-export const getMessages = async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const userId = req.user?.id;
-    const chatPageId = req.params.chatPageId;
-
-    if (!userId) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-
-    if (!chatPageId || typeof chatPageId !== "string") {
-      return res.status(400).json({ message: "chatPageId is required" });
-    }
-
-    const message = await prisma.chatPage.findFirst({
-      where: {
-        id: chatPageId,
-      },
-    });
-
-    if (!message) {
-      return res.status(404).json({ message: "Message not found" });
-    }
-
-    const workspace = await prisma.workspace.findFirst({
-      where: {
-        id: message.workspaceId,
-        userId: userId,
-      },
-    });
-
-    if (!workspace) {
-      return res.status(403).json({ message: "Forbidden" });
-    }
-
-    return res.status(200).json(message);
-  } catch (error) {
-    console.error("Error getting message:", error);
-    return res.status(500).json({ message: "Internal server error" });
-  }
-};
-
-export const createMessage = async (
-  req: AuthenticatedRequest,
+export const getMessages = async (
+  req: Request,
   res: Response,
+  next: NextFunction,
 ) => {
   try {
     const userId = req.user?.id;
-    const chatPageId = req.params.chatPageId;
-    const { content, role } = req.body;
+    const chatPageId = req.params.chatPageId as string;
 
     if (!userId) {
-      return res.status(401).json({ message: "Unauthorized" });
+      throw new AppError("Unauthorized", 401);
     }
 
-    if (!chatPageId || typeof chatPageId !== "string") {
-      return res.status(400).json({ message: "chatPageId is required" });
-    }
-
-    if (!role || typeof role !== "string") {
-      return res
-        .status(400)
-        .json({ message: "role is required and must be a string" });
-    }
-
-    if (!content || typeof content !== "string") {
-      return res
-        .status(400)
-        .json({ message: "content is required and must be a string" });
-    }
-
-    const validRole = ["user", "assistant", "system"];
-    if (!validRole.includes(role)) {
-      return res.status(400).json({
-        message: `role must be one of the following: ${validRole.join(", ")}`,
-      });
+    if (!chatPageId) {
+      throw new AppError("Chat page ID is required", 400);
     }
 
     const chatPage = await prisma.chatPage.findFirst({
       where: {
         id: chatPageId,
       },
-    });
-
-    if (!chatPage) {
-      return res.status(404).json({ message: "Chat page not found" });
-    }
-
-    const workspace = await prisma.workspace.findFirst({
-      where: {
-        id: chatPage.workspaceId,
-        userId: userId,
+      include: {
+        workspace: true,
+        messages: {
+          orderBy: { createdAt: "asc" },
+        },
       },
     });
 
-    if (!workspace) {
-      return res.status(403).json({ message: "Forbidden" });
+    if (!chatPage) {
+      throw new AppError("Chat page not found", 404);
+    }
+
+    // Verify ownership
+    if (chatPage.workspace.userId !== userId) {
+      throw new AppError("Forbidden", 403);
+    }
+
+    res.status(200).json(chatPage.messages);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const createMessage = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const userId = req.user?.id;
+    const chatPageId = req.params.chatPageId as string;
+    const { content, role } = req.body;
+
+    if (!userId) {
+      throw new AppError("Unauthorized", 401);
+    }
+
+    if (!chatPageId) {
+      throw new AppError("Chat page ID is required", 400);
+    }
+
+    if (
+      !content ||
+      typeof content !== "string" ||
+      content.trim().length === 0
+    ) {
+      throw new AppError("Message content is required", 400);
+    }
+
+    if (!role || typeof role !== "string") {
+      throw new AppError("Role is required and must be a string", 400);
+    }
+
+    if (!VALID_ROLES.includes(role as MessageRole)) {
+      throw new AppError(`Role must be one of: ${VALID_ROLES.join(", ")}`, 400);
+    }
+
+    const chatPage = await prisma.chatPage.findFirst({
+      where: {
+        id: chatPageId,
+      },
+      include: {
+        workspace: true,
+      },
+    });
+
+    if (!chatPage) {
+      throw new AppError("Chat page not found", 404);
+    }
+
+    // Verify ownership
+    if (chatPage.workspace.userId !== userId) {
+      throw new AppError("Forbidden", 403);
     }
 
     const newMessage = await prisma.message.create({
       data: {
-        content,
+        content: content.trim(),
         role,
         chatPageId: chatPageId,
       },
     });
 
+    // Update chatPage timestamp
     await prisma.chatPage.update({
-      where: {
-        id: chatPageId,
-      },
-      data: {
-        updatedAt: new Date(),
-      },
+      where: { id: chatPageId },
+      data: { updatedAt: new Date() },
     });
 
-    return res.status(201).json(newMessage);
+    res.status(201).json(newMessage);
   } catch (error) {
-    console.error("Error creating message:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    next(error);
   }
 };
 
 export const deleteMessage = async (
-  req: AuthenticatedRequest,
+  req: Request,
   res: Response,
+  next: NextFunction,
 ) => {
   try {
     const userId = req.user?.id;
-    const messageId = req.params.messageId;
+    const messageId = req.params.messageId as string;
 
     if (!userId) {
-      return res.status(401).json({ message: "Unauthorized" });
+      throw new AppError("Unauthorized", 401);
     }
 
-    if (!messageId || typeof messageId !== "string") {
-      return res.status(400).json({ message: "messageId is required" });
+    if (!messageId) {
+      throw new AppError("Message ID is required", 400);
     }
 
     const message = await prisma.message.findFirst({
       where: {
         id: messageId,
       },
+      include: {
+        chatPage: {
+          include: {
+            workspace: true,
+          },
+        },
+      },
     });
 
     if (!message) {
-      return res.status(404).json({ message: "Message not found" });
+      throw new AppError("Message not found", 404);
     }
 
-    const chatPage = await prisma.chatPage.findFirst({
-      where: {
-        id: message.chatPageId,
-      },
-    });
-
-    if (!chatPage) {
-      return res.status(404).json({ message: "Chat page not found" });
-    }
-
-    const workspace = await prisma.workspace.findFirst({
-      where: {
-        id: chatPage.workspaceId,
-        userId: userId,
-      },
-    });
-
-    if (!workspace) {
-      return res.status(403).json({ message: "Forbidden" });
+    // Verify ownership
+    if (message.chatPage.workspace.userId !== userId) {
+      throw new AppError("Forbidden", 403);
     }
 
     await prisma.message.delete({
-      where: {
-        id: messageId,
-      },
+      where: { id: messageId },
     });
 
-    return res.status(200).json({ message: "Message deleted successfully" });
+    res.status(200).json({ message: "Message deleted successfully" });
   } catch (error) {
-    console.error("Error deleting message:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    next(error);
   }
 };
