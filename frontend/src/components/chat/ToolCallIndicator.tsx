@@ -1,4 +1,4 @@
-import { Search, Loader2, CheckCircle } from "lucide-react";
+import { Search, Loader2, CheckCircle, Globe } from "lucide-react";
 import type { ToolCallInfo } from "@/hooks/useStreamingChat";
 
 interface ToolCallIndicatorProps {
@@ -22,13 +22,24 @@ export const ToolCallIndicator = ({ toolCalls }: ToolCallIndicatorProps) => {
           )}
 
           {tool.name === "tavily_search_results_json" ||
-          tool.name === "web_search" ? (
+          tool.name === "web_search" ||
+          tool.name === "tavily_search" ? (
             <>
               <Search className="h-4 w-4 text-gray-400 shrink-0" />
               <span className="text-gray-300">
                 {tool.status === "running" ? "Searching: " : "Searched: "}
                 <span className="text-blue-400">
                   {getSearchQuery(tool.input)}
+                </span>
+              </span>
+            </>
+          ) : tool.name === "url_fetcher" ? (
+            <>
+              <Globe className="h-4 w-4 text-gray-400 shrink-0" />
+              <span className="text-gray-300">
+                {tool.status === "running" ? "Fetching: " : "Fetched: "}
+                <span className="text-blue-400 truncate max-w-xs inline-block align-bottom">
+                  {getUrl(tool.input)}
                 </span>
               </span>
             </>
@@ -56,6 +67,24 @@ const getSearchQuery = (input: unknown): string => {
     const query = obj.query || obj.search_query || obj.q || "";
     if (typeof query === "string") {
       return query.slice(0, 50) + (query.length > 50 ? "..." : "");
+    }
+  }
+
+  return "...";
+};
+
+const getUrl = (input: unknown): string => {
+  if (!input) return "...";
+
+  if (typeof input === "string") {
+    return input.slice(0, 60) + (input.length > 60 ? "..." : "");
+  }
+
+  if (typeof input === "object" && input !== null) {
+    const obj = input as Record<string, unknown>;
+    const url = obj.url || "";
+    if (typeof url === "string") {
+      return url.slice(0, 60) + (url.length > 60 ? "..." : "");
     }
   }
 

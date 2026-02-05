@@ -35,7 +35,7 @@ export const DashboardLayout = ({
       : user?.email?.split("@")[0]?.slice(0, 2)?.toUpperCase()) || "U";
 
   return (
-    <div className="h-screen overflow-hidden bg-gray-900 flex">
+    <div className="h-[100dvh] overflow-hidden bg-gray-900 flex">
       {/* Mobile menu overlay */}
       {mobileMenuOpen && (
         <div
