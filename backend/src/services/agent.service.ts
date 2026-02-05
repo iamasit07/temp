@@ -3,6 +3,8 @@ import { BaseMessage, HumanMessage, AIMessage, ToolMessage, AIMessageChunk } fro
 import { Annotation, StateGraph, START } from '@langchain/langgraph';
 import { ToolNode } from '@langchain/langgraph/prebuilt';
 import { TavilySearch } from '@langchain/tavily';
+import type { StructuredToolInterface } from '@langchain/core/tools';
+import { createUrlFetcherTool } from './tools/urlFetcher.tool.js';
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -24,7 +26,7 @@ type AgentStateType = typeof AgentState.State;
 
 export class ChatAgent {
   private model: ChatOpenAI;
-  private tools: TavilySearch[];
+  private tools: StructuredToolInterface[];
   private graph: ReturnType<typeof this.buildGraph>;
 
   constructor() {
@@ -48,6 +50,7 @@ export class ChatAgent {
         tavilyApiKey: process.env.TAVILY_API_KEY || "",
         maxResults: 3,
       }),
+      createUrlFetcherTool(),
     ];
 
     this.graph = this.buildGraph();
@@ -119,7 +122,7 @@ export class ChatAgent {
           yield {
             type: 'tool_start',
             data: {
-              toolName: event.name || 'tavily_search',
+              toolName: event.name || 'unknown_tool',
               input: event.data?.input,
             },
           };

@@ -7,7 +7,9 @@ A production-ready, full-stack AI chat application featuring real-time streaming
 
 ## 🚀 Key Features
 
-- **🤖 Advanced AI Agent**: Powered by **LangGraph** & **OpenAI/OpenRouter**, capable of multi-step reasoning and tool usage (Tavily Web Search).
+- **🤖 Advanced AI Agent**: Powered by **LangGraph** & **OpenAI/OpenRouter**, capable of multi-step reasoning and tool usage.
+  - **Web Search**: Tavily-powered search for current information
+  - **URL Fetcher**: Extract and summarize content from any webpage
 - **⚡ Real-time Streaming**: Custom server-sent events (SSE) implementation for token-by-token responses.
 - **🔐 Secure Authentication**: HttpOnly cookie-based JWT authentication with access/refresh token rotation. No localStorage tokens.
 - **🏢 Workspace Management**: Organize chats into workspaces; users can manage multiple distinct contexts.
@@ -37,7 +39,7 @@ The application follows a clean 3-tier architecture:
 - **Language**: TypeScript
 - **Database**: MongoDB, Prisma ORM
 - **AI/LLM**: LangChain, LangGraph, OpenRouter (GPT-4o)
-- **Tools**: Tavily Search API
+- **Tools**: Tavily Search API, URL Fetcher (Cheerio)
 - **Auth**: JSON Web Tokens (JWT), Bcrypt
 
 ## 📋 Prerequisites
